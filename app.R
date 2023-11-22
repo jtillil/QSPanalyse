@@ -4,6 +4,8 @@ library(ggplot2)
 library(tidyr)
 library(R.matlab)
 library(visNetwork)
+library(reactlog)
+library(tictoc)
 
 #### MATLAB access functions ####
 matacc = function(obj, attr) {
@@ -12,6 +14,9 @@ matacc = function(obj, attr) {
 matacc2 = function(obj, attr1, attr2) {
   return( obj[attr1,,][[attr1]][attr2,,][[attr2]] )
 }
+matacc3 = function(obj, attr1, attr2, attr3) {
+  return( obj[attr1,,][[attr1]][attr2,,][[attr2]][attr3,,][[attr3]] )
+}
 
 #### UI ####
 
@@ -19,24 +24,39 @@ matacc2 = function(obj, attr1, attr2) {
 ui = navbarPage("QSPanalyse",
   tabPanel("Info",
     sidebarLayout(
-       sidebarPanel(
-         textInput("working_directory", "Working directory:", "/Users/jtm2/Desktop/Matlab/Johannes Model Reduction/tQSSA"),
-         textInput("file_location", "Model file:", "tQSSA/res.mat"),
-       ),
-       mainPanel(
-         textOutput("model_summary"),
-       )
-     )
+      sidebarPanel(
+        textInput("working_directory", "Working directory:", "/Users/jtm2/Documents/GitHub/ModelReduction/"),
+        selectInput(
+          "model_directory",
+          "Model directory:",
+          NULL,
+          selected = NULL,
+          multiple = FALSE,
+          selectize = TRUE
+        ),
+        selectInput(
+          "model_file",
+          "Model file:",
+          NULL,
+          selected = NULL,
+          multiple = FALSE,
+          selectize = TRUE
+        ),
+        # textInput("file", "Model file:", "Core/minimalsolution.mat"),
+        # textInput("file_location", "Model file:", "MAIN/results/modelEGFR_exh_baset60_0.1_Inf_out_dyncnegpnegenvirenvpss_new.mat"),
+      ),
+      mainPanel(
+        verbatimTextOutput("info"),
+      )
+    )
   ),
-  tabPanel("Plot",
+  tabPanel("Solution",
     sidebarLayout(
       sidebarPanel(
-        textInput("file_location_plots", "/Users/jtm2/Desktop/Matlab/Johannes Model Reduction/", "tQSSA/res.mat"),
-        # textOutput("model_summary"),
-        checkboxGroupInput("state", "Choose states:", 
-                    choices = NULL, selected = NULL),
         actionButton("select_all_states", "Select all states"),
         actionButton("unselect_all_states", "Unselect all states"),
+        checkboxGroupInput("state", "Choose states:", 
+                    choices = NULL, selected = NULL),
         selectInput("index", "Choose index:", 
                    choices = c("ir"), selected = "ir"),
       ),
@@ -46,11 +66,24 @@ ui = navbarPage("QSPanalyse",
       )
     )
   ),
+  tabPanel("Error",
+    verticalLayout(
+      plotOutput("plot_out_err"),
+      plotOutput("plot_int_err"),
+    )
+  ),
   tabPanel("Graph",
     sidebarLayout(
       sidebarPanel(
-        textInput("file_location_graph", "/Users/jtm2/Desktop/Matlab/Johannes Model Reduction/", "tQSSA/res.mat"),
-        textInput("save_location_graph", "Save file:", "/Users/jtm2/Desktop/Matlab/Johannes Model Reduction/tQSSA/graph.html"),
+        sliderInput(
+          "iteration",
+          "MOR Iteration",
+          min = 1,
+          max = 100,
+          value = 1,
+          step = 1
+        ),
+        textInput("save_location_graph", "Save file:", "/Users/jtm2/Desktop/graphs/graph.html"),
         actionButton("save_graph_button", "Save Graph"),
       ),
       mainPanel(
@@ -61,12 +94,16 @@ ui = navbarPage("QSPanalyse",
   tabPanel("Reduced Model",
     sidebarLayout(
       sidebarPanel(
-        textInput("file_location_reduced_graph", "/Users/jtm2/Desktop/Matlab/Johannes Model Reduction/", "tQSSA/res.mat"),
-        textInput("save_location_reduced_graph", "Save file:", "/Users/jtm2/Desktop/Matlab/Johannes Model Reduction/tQSSA/graph.html"),
-        actionButton("save_reduced_graph_button", "Save Graph"),
       ),
       mainPanel(
-        visNetworkOutput("reduced_graph"),
+      )
+    )
+  ),
+  tabPanel("Internal States",
+    sidebarLayout(
+      sidebarPanel(
+      ),
+      mainPanel(
       )
     )
   )
@@ -79,38 +116,42 @@ server = function(input, output, session) {
   
   #### Sync Shared Inputs ####
   
-  # Sync file location
-  observeEvent(
-    input$file_location_plots,
-    updateTextInput(session, "file_location_graph", "/Users/jtm2/Desktop/Matlab/Johannes Model Reduction/", input$file_location_plots)
-  )
-  observeEvent(
-    input$file_location_plots,
-    updateTextInput(session, "file_location_reduced_graph", "/Users/jtm2/Desktop/Matlab/Johannes Model Reduction/", input$file_location_plots)
-  )
-  observeEvent(
-    input$file_location_graph,
-    updateTextInput(session, "file_location_plots", "/Users/jtm2/Desktop/Matlab/Johannes Model Reduction/", input$file_location_graph)
-  )
-  observeEvent(
-    input$file_location_graph,
-    updateTextInput(session, "file_location_plots", "/Users/jtm2/Desktop/Matlab/Johannes Model Reduction/", input$file_location_graph)
-  )
+  
   
   #### Reactive Values ####
   
-  # Reactive values to store data
+  # Reactive working directory
+  wd_reactive = reactive({
+    req(input$working_directory)
+    return(input$working_directory)
+  })
+  
+  # Reactive model directory
+  md_reactive = reactive({
+    req(input$model_directory)
+    return(input$model_directory)
+  })
+  
+  # Reactive model path
+  model_path_reactive = reactive({
+    req(input$model_file)
+    return(paste0(input$working_directory, input$model_directory, "/", input$model_file))
+  })
+  
+  # Reactive model object
   model_reactive = reactive({
-    req(input$file_location_plots)
-    matdat = readMat(paste0("/Users/jtm2/Desktop/Matlab/Johannes Model Reduction/", input$file_location_plots))
+    path = model_path_reactive()
+    print(paste0("Reading model from: ", path))
+    tic()
+    matdat = readMat(path)
     model = matdat$model
+    print("Finished.")
+    toc()
     return(model)
   })
   
   # Reactive state options
   states_reactive = reactive({
-    # Ensure a file location is provided
-    req(input$file_location_plots)
     # Read model
     model = model_reactive()
     # Extract state options
@@ -120,8 +161,6 @@ server = function(input, output, session) {
   
   # Reactive indices options
   indices_reactive = reactive({
-    # Ensure a file location is provided
-    req(input$file_location_plots)
     # Read model
     model = model_reactive()
     # Extract state options
@@ -130,6 +169,39 @@ server = function(input, output, session) {
   })
   
   #### Update UI ####
+  
+  # Update model directory options
+  observe({
+    # Update the choices when states_reactive changes
+    wd = wd_reactive()
+    folders <- list.dirs(path = wd, recursive = TRUE, full.names = FALSE)
+    for (i in length(folders):1) {
+      if (substr(folders[i], 1, 1) == ".") {
+        folders = folders[-i]
+      }
+    }
+    if (folders[1] == "") {
+      folders = folders[-1]
+    }
+    if (!is.null(folders)) {
+      updateSelectInput(session, "model_directory", choices = folders, selected = folders[1])
+    } else {
+      updateSelectInput(session, "model_directory", choices = "Working directory empty!", selected = "Working directory empty!")
+    }
+  })
+  
+  # Update model file options
+  observe({
+    # Update the choices when states_reactive changes
+    wd = wd_reactive()
+    md = md_reactive()
+    files = setdiff(list.files(path = paste0(wd, md)), list.dirs(path = paste0(wd, md), recursive = FALSE, full.names = FALSE))
+    if (!is.null(files)) {
+      updateSelectInput(session, "model_file", choices = files, selected = files[1])
+    } else {
+      updateSelectInput(session, "model_file", choices = "Working directory empty!", selected = "Working directory empty!")
+    }
+  })
   
   # Update state options
   observe({
@@ -161,6 +233,35 @@ server = function(input, output, session) {
     }
   )
   
+  # Update iteration selector
+  observe({
+    # Update the choices when indices_reactive changes
+    model = model_reactive()
+    updateSliderInput(session, "iteration", max = matacc(model, "nsteps"))
+  })
+  
+  #### Render Info Text ####
+  
+  output$info = renderText({
+    
+    # Read model
+    model = model_reactive()
+    
+    display_string = paste0(
+      "Model:         ", matacc(model, "name"), "\n",
+      "Scenario:      ", matacc(model, "scenario"), "\n",
+      "\n",
+      "Input:         ", as.character(unlist(matacc2(model, "I", "nmstate")[[matacc2(model, "I", "input")]])), "\n",
+      "output:        ", as.character(unlist(matacc2(model, "I", "nmstate")[[matacc2(model, "I", "output")]])), "\n",
+      "\n",
+      "#States:       ", as.character(matacc2(model, "I", "nstates")), "\n",
+      "#Parameters:   ", as.character(matacc2(model, "I", "npar"))
+    )
+    
+    # Start text string
+    return(display_string)
+  })
+  
   #### Plot Reference Solution ####
   
   # Render state plot
@@ -173,6 +274,7 @@ server = function(input, output, session) {
     refsol = data.frame(matacc(model, "t.ref"), matacc(model, "X.ref"))
     
     # Assign colnames of ref solution
+    # print(unlist(matacc2(model, "I", "nmstate")))
     colnames(refsol) = c("t", unlist(matacc2(model, "I", "nmstate")))
     
     # Pivot ref solution
@@ -273,79 +375,191 @@ server = function(input, output, session) {
     }
   })
   
-  #### Handle full Model visNetwork Graphing ####
+  #### Handle visNetwork Graphing ####
   
   visnetwork_reactive = reactive({
-    # Change upon loading new file
-    req(input$file_location_plots)
-    
     # Read model
     model = model_reactive()
     
-    # Read stoichiometric matrix
-    # ...
+    # Read indices
+    indices = which(matacc(model, "adjmat") == 1, arr.ind = TRUE)
+    substrindices = which(matacc(model, "substratemask") == 1, arr.ind = TRUE)
     
     # Create nodes
-    nodenames = unlist(matacc2(model, "I", "nmstate"))
+    speciesnames = unlist(matacc2(model, "I", "nmstate"))
+    paramnames = unlist(matacc2(model, "I", "nmpar"))
+    config_numeric = matacc(model, "configs")[input$iteration,]
+    config = unlist(matacc(model, "classifs")[config_numeric])
     nodes <- data.frame(
-      id = 1:length(nodenames),
-      label = c("A", NA, "E", "C", "P"),
-      group = c("S", "C", "E", "E", "S")
+      id = 1:(length(speciesnames) + length(paramnames)),
+      label = c(speciesnames, paramnames),
+      group = c(config, rep("k", matacc2(model, "I", "npar")))
     )
+    nodes$group[matacc2(model, "I", "output")] = "output"
+    nodes$group[matacc2(model, "I", "input")] = "input"
     
     # Create edges
+    edgecolors = rep("black", nrow(indices))
+    edgecolors[nodes$group[indices[,1]] %in% c("pneg", "cneg")] = "lightgray"
+    edgecolors[indices[,1] %in% indices[,2][nodes$group[indices[,1]] %in% c("pneg", "cneg")]] = "lightgray"
+    edgecolors[indices[,2] %in% indices[,2][nodes$group[indices[,1]] %in% c("pneg", "cneg")]] = "lightgray"
+    edgecolors[nodes$group[indices[,2]] == "cneg"] = "lightgray"
+    edgecolors[indices[,2] %in% indices[,1][nodes$group[indices[,2]] == "cneg"]] = "lightgray"
+    edgecolors[indices[,1] %in% indices[,1][nodes$group[indices[,2]] == "cneg"]] = "lightgray"
     edges <- data.frame(
-      from = c(1, 2, 4, 5), 
-      to = c(2, 3, 2, 3),
-      length = c(NA, 0, NA, NA),
-      width = c(NA, 0, NA, NA),
-      arrows = c("to", NA, "to", "to"),
+      from = indices[,1],
+      to = indices[,2],
+      # length = ifelse(nodes$group[indices[,1]] == "k", 5, 20),
+      # width = c(NA, 0, NA, NA),
+      arrows = ifelse(apply(indices, 1, function(index) {any(apply(substrindices, 1, function(substrindex) identical(index, substrindex)))}), NA, "to"),
       # opacity = c(NA, 0, NA, NA),
-      color = c(NA, "white", NA, NA)
-      # physics = c(T, F, T, T),
+      color = edgecolors
+      # physics = T
       # scaling = c(NA, list(min=0, max=0), NA, NA))
       # label = c("Edge1", "Edge2", "Edge3", "Edge4", "Edge5")
     )
     
+    # Set a seed
+    seed = 100
+    set.seed(seed)
+    
     # Create and customize visNetwork object
-    visNetwork(nodes, edges) %>%
+    visNetwork(nodes, edges, height = "100em", width = "100em") %>%
+      visLayout(
+        randomSeed = seed
+      ) %>%
+      visIgraphLayout() %>%
       
       # Edges
       visEdges(
-        smooth = TRUE,
-        color = "black") %>%
+        smooth = T,
+        color = "black"
+      ) %>%
       
-      # Species - "S"
+      # Species - "input"
       visGroups(
-        groupname = "S",
-        # color = "grey",
-        shape = "square", 
-        shadow = list(enabled = FALSE)) %>% 
-      # Enzyme - "E"
-      visGroups(
-        groupname = "E",
-        # color = "grey",
+        groupname = "input",
+        color = "blue",
         shape = "dot", 
-        shadow = list(enabled = FALSE)) %>% 
-      # Connector - "C"
-      visGroups(
-        groupname = "C",
-        label = "",
-        shape = "dot",
-        size = 0,
-        hidden = FALSE,
-        physics = TRUE) %>%
+        size = 60,
+        shadow = list(enabled = FALSE)
+      ) %>%
       
-      # Physics Options
-      visPhysics(
-        # repulsion = list(
-        #   nodeDistance = 0,
-        #   springLength = 0
-        # ),
-        enabled = TRUE
-      )
-    # visEdges(smooth = list(enabled = TRUE, type = "diagonalCross"))
-    # visEdges(edges = list(arrows = 'to', smooth = list(type = 'dynamic')))
+      # Species - "output"
+      visGroups(
+        groupname = "output",
+        color = "blue",
+        shape = "star", 
+        size = 100,
+        shadow = list(enabled = FALSE)
+      ) %>%
+      
+      # Species - "dyn"
+      visGroups(
+        groupname = "dyn",
+        color = "blue",
+        shape = "dot", 
+        size = 20,
+        shadow = list(enabled = FALSE)
+      ) %>%
+      
+      # Species - "env"
+      visGroups(
+        groupname = "irenv",
+        color = "lightgreen",
+        shape = "dot", 
+        size = 20,
+        shadow = list(enabled = FALSE)
+      ) %>%
+      
+      # Species - "env"
+      visGroups(
+        groupname = "env",
+        color = "lightgreen",
+        shape = "dot", 
+        size = 20,
+        shadow = list(enabled = FALSE)
+      ) %>%
+      
+      # Species - "env"
+      visGroups(
+        groupname = "pss",
+        color = "red",
+        shape = "dot", 
+        size = 20,
+        shadow = list(enabled = FALSE)
+      ) %>%
+      
+      # Species - "neg"
+      visGroups(
+        groupname = "cneg",
+        color = "lightgrey",
+        shape = "dot", 
+        size = 20,
+        shadow = list(enabled = FALSE)
+      ) %>%
+      
+      # Species - "neg"
+      visGroups(
+        groupname = "pneg",
+        color = "lightgrey",
+        shape = "dot", 
+        size = 20,
+        shadow = list(enabled = FALSE)
+      ) %>%
+      
+      # Reaction - "reaction"
+      visGroups(
+        groupname = "k",
+        # label = "",
+        shape = "dot",
+        size = 0
+        # hidden = FALSE
+        # physics = F
+      ) %>% 
+      
+      visInteraction(
+        dragNodes = TRUE,
+        dragView = TRUE,
+        zoomView = TRUE,
+        navigationButtons = TRUE,
+        tooltipDelay = 100
+      ) %>%
+      
+      visOptions(
+        highlightNearest = list(enabled = T, degree = 2, hover = T)
+        # nodesIdSelection = T,
+        # selectedBy = "group"
+      ) #%>%
+      
+      # visLegend(
+      #   addNodes = list(
+      #     list(
+      #       label = "dynamic",
+      #       color = "blue",
+      #       shape = "dot", 
+      #       size = 10
+      #     ),
+      #     list(
+      #       label = "env",
+      #       color = "green",
+      #       shape = "dot", 
+      #       size = 10
+      #     ),
+      #     list(
+      #       label = "pss",
+      #       color = "red",
+      #       shape = "dot", 
+      #       size = 10
+      #     ),
+      #     list(
+      #       label = "neg",
+      #       color = "lightgray",
+      #       shape = "dot", 
+      #       size = 10
+      #     )),
+      #   useGroups = F
+      # )
   })
   
   observeEvent(
@@ -358,90 +572,10 @@ server = function(input, output, session) {
     visnetwork_reactive()
   })
   
-  #### Handle reduced Model visNetwork Graphing ####
+  #### Handle internal States ####
   
-  visnetwork_reduced_reactive = reactive({
-    # Change upon loading new file
-    req(input$file_location_plots)
-    
-    # Read model
-    model = model_reactive()
-    
-    # Read stoichiometric matrix
-    # ...
-    
-    # Create nodes
-    nodenames = unlist(matacc2(model, "I", "nmstate"))
-    nodes <- data.frame(
-      id = 1:length(nodenames),
-      label = c("A", NA, "E", "C", "P"),
-      group = c("S", "C", "E", "E", "S")
-    )
-    
-    # Create edges
-    edges <- data.frame(
-      from = c(1, 2, 4, 5), 
-      to = c(2, 3, 2, 3),
-      length = c(NA, 0, NA, NA),
-      width = c(NA, 0, NA, NA),
-      arrows = c("to", NA, "to", "to"),
-      # opacity = c(NA, 0, NA, NA),
-      color = c(NA, "white", NA, NA)
-      # physics = c(T, F, T, T),
-      # scaling = c(NA, list(min=0, max=0), NA, NA))
-      # label = c("Edge1", "Edge2", "Edge3", "Edge4", "Edge5")
-    )
-    
-    # Create and customize visNetwork object
-    visNetwork(nodes, edges) %>%
-      
-      # Edges
-      visEdges(
-        smooth = TRUE,
-        color = "black") %>%
-      
-      # Species - "S"
-      visGroups(
-        groupname = "S",
-        # color = "grey",
-        shape = "square", 
-        shadow = list(enabled = FALSE)) %>% 
-      # Enzyme - "E"
-      visGroups(
-        groupname = "E",
-        # color = "grey",
-        shape = "dot", 
-        shadow = list(enabled = FALSE)) %>% 
-      # Connector - "C"
-      visGroups(
-        groupname = "C",
-        label = "",
-        shape = "dot",
-        size = 0,
-        hidden = FALSE,
-        physics = TRUE) %>%
-      
-      # Physics Options
-      visPhysics(
-        # repulsion = list(
-        #   nodeDistance = 0,
-        #   springLength = 0
-        # ),
-        enabled = TRUE
-      )
-    # visEdges(smooth = list(enabled = TRUE, type = "diagonalCross"))
-    # visEdges(edges = list(arrows = 'to', smooth = list(type = 'dynamic')))
-  })
   
-  observeEvent(
-    input$save_reduced_graph_button,
-    visSave(visnetwork_reduced_reactive(), input$save_location_reduced_graph, background = "white")
-  )
   
-  output$reduced_graph = renderVisNetwork({
-    # Output reactive visnetwork object
-    visnetwork_reduced_reactive()
-  })
 }
 
 #### Run ####
