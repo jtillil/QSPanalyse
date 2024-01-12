@@ -83,7 +83,14 @@ ui = navbarPage("QSPanalyse",
           value = 1,
           step = 1
         ),
-        textInput("save_location_graph", "Save file:", "/Users/jtm2/Desktop/graphs/graph.html"),
+        numericInput(
+          "seed",
+          "Graph Seed",
+          value = 115,
+          step = 1
+        ),
+        textInput("save_directory_graph", "Save directory:", "/Users/jtm2/Desktop/graphs/"),
+        textInput("save_file_graph", "Save file:", "graph.html"),
         actionButton("save_graph_button", "Save Graph"),
       ),
       mainPanel(
@@ -145,7 +152,7 @@ server = function(input, output, session) {
     tic()
     matdat = readMat(path)
     model = matdat$model
-    print("Finished.")
+    print("Finished reading model.")
     toc()
     return(model)
   })
@@ -239,6 +246,12 @@ server = function(input, output, session) {
     model = model_reactive()
     updateSliderInput(session, "iteration", max = matacc(model, "nsteps"))
   })
+  observeEvent(
+    input$iteration,
+    {
+      updateTextInput(session, "save_file_graph", value = paste0("graph_", input$iteration, ".html"))
+    }
+  )
   
   #### Render Info Text ####
   
@@ -389,6 +402,7 @@ server = function(input, output, session) {
     speciesnames = unlist(matacc2(model, "I", "nmstate"))
     paramnames = unlist(matacc2(model, "I", "nmpar"))
     config_numeric = matacc(model, "configs")[input$iteration,]
+    # config_numeric = matacc(model, "configs")[422,]
     config = unlist(matacc(model, "classifs")[config_numeric])
     nodes <- data.frame(
       id = 1:(length(speciesnames) + length(paramnames)),
@@ -400,12 +414,33 @@ server = function(input, output, session) {
     
     # Create edges
     edgecolors = rep("black", nrow(indices))
-    edgecolors[nodes$group[indices[,1]] %in% c("pneg", "cneg")] = "lightgray"
-    edgecolors[indices[,1] %in% indices[,2][nodes$group[indices[,1]] %in% c("pneg", "cneg")]] = "lightgray"
-    edgecolors[indices[,2] %in% indices[,2][nodes$group[indices[,1]] %in% c("pneg", "cneg")]] = "lightgray"
-    edgecolors[nodes$group[indices[,2]] == "cneg"] = "lightgray"
-    edgecolors[indices[,2] %in% indices[,1][nodes$group[indices[,2]] == "cneg"]] = "lightgray"
-    edgecolors[indices[,1] %in% indices[,1][nodes$group[indices[,2]] == "cneg"]] = "lightgray"
+    # edgecolors[nodes$group[indices[,1]] %in% c("pneg", "cneg")] = "lightgray"
+    # edgecolors[indices[,1] %in% indices[,2][nodes$group[indices[,1]] %in% c("pneg", "cneg")]] = "lightgray"
+    # edgecolors[indices[,2] %in% indices[,2][nodes$group[indices[,1]] %in% c("pneg", "cneg")]] = "lightgray"
+    # edgecolors[nodes$group[indices[,2]] == "cneg"] = "lightgray"
+    # edgecolors[indices[,2] %in% indices[,1][nodes$group[indices[,2]] == "cneg"]] = "lightgray"
+    # edgecolors[indices[,1] %in% indices[,1][nodes$group[indices[,2]] == "cneg"]] = "lightgray"
+    edgecolors[nodes$group[indices[,1]] %in% c("pneg", "cneg")] = "white"
+    edgecolors[indices[,1] %in% indices[,2][nodes$group[indices[,1]] %in% c("pneg", "cneg")]] = "white"
+    edgecolors[indices[,2] %in% indices[,2][nodes$group[indices[,1]] %in% c("pneg", "cneg")]] = "white"
+    edgecolors[nodes$group[indices[,2]] == "cneg"] = "white"
+    edgecolors[indices[,2] %in% indices[,1][nodes$group[indices[,2]] == "cneg"]] = "white"
+    edgecolors[indices[,1] %in% indices[,1][nodes$group[indices[,2]] == "cneg"]] = "white"
+    
+    # count params in model
+    print(length(unique(c(indices[indices[, 1] > 112, 1], indices[indices[, 1] > 112, 1]))))
+    print(length(paramnames) - length(unique(indices[nodes$group[indices[,1]] %in% c("pneg", "cneg"), 2])))
+    # params_in_model = numeric(length(paramnames)) + 1
+    # print(sum(params_in_model))
+    # for (i in 1:length(edgecolors)) {
+    #   if (edgecolors[i] == "white") {
+    #     if (indices[i, 1] < 113) {
+    #       params_in_model[indices[i, 1] - 112] = 0
+    #     }
+    #   }
+    # }
+    # print(sum(params_in_model))
+    
     edges <- data.frame(
       from = indices[,1],
       to = indices[,2],
@@ -420,13 +455,14 @@ server = function(input, output, session) {
     )
     
     # Set a seed
-    seed = 100
-    set.seed(seed)
+    # 13 101 103 104 115 117
+    # 19
+    set.seed(input$seed)
     
     # Create and customize visNetwork object
     visNetwork(nodes, edges, height = "100em", width = "100em") %>%
       visLayout(
-        randomSeed = seed
+        randomSeed = input$seed
       ) %>%
       visIgraphLayout() %>%
       
@@ -490,19 +526,21 @@ server = function(input, output, session) {
         shadow = list(enabled = FALSE)
       ) %>%
       
-      # Species - "neg"
+      # Species - "cneg"
       visGroups(
         groupname = "cneg",
-        color = "lightgrey",
+        # color = "lightgrey",
+        color = "white",
         shape = "dot", 
         size = 20,
         shadow = list(enabled = FALSE)
       ) %>%
       
-      # Species - "neg"
+      # Species - "pneg"
       visGroups(
         groupname = "pneg",
-        color = "lightgrey",
+        # color = "lightgrey",
+        color = "white",
         shape = "dot", 
         size = 20,
         shadow = list(enabled = FALSE)
@@ -530,7 +568,19 @@ server = function(input, output, session) {
         highlightNearest = list(enabled = T, degree = 2, hover = T)
         # nodesIdSelection = T,
         # selectedBy = "group"
-      ) #%>%
+      ) %>%
+      
+      visExport(
+        type = "pdf",
+        name = "EGFR_graph",
+        label = "Save network",
+        background = "white",
+      ) 
+    
+      # visExport()
+    
+    
+    #%>%
       
       # visLegend(
       #   addNodes = list(
@@ -564,7 +614,7 @@ server = function(input, output, session) {
   
   observeEvent(
     input$save_graph_button,
-    visSave(visnetwork_reactive(), input$save_location_graph, background = "white")
+    visSave(visnetwork_reactive(), paste0(input$save_directory_graph, input$save_file_graph), selfcontained = TRUE, background = "white")
   )
   
   output$graph = renderVisNetwork({
