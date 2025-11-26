@@ -1,2 +1,2 @@
 # QSPanalyse
-R shiny app for analysing QSP model reduction output files
+Work in progress: R shiny app for analysing QSP model reduction output files.
